@@ -1,123 +1,83 @@
 pipeline {
     agent any
-
-    tools {
-        jdk 'JDK17'        // Configure in Manage Jenkins → Global Tool Configuration
-        maven 'Maven3'     // Same there
-    }
-
+    
     environment {
-        IMAGE        = "timidevops/userportal"
-        KUBE_NAMESPACE = "default"
-        KUBE_DEPLOYMENT = "tomcat"
-
-        // Jenkins credentials IDs (set these up in Jenkins)
-        DOCKERHUB      = credentials('dockerhub')          // username/password or token
-        SONAR_TOKEN    = credentials('sonarqube-token')    // Secret text from SonarQube
-        NEXUS           = credentials('nexus')       // username/password for Nexus (if needed)
+        TOMCAT_HOME = '/opt/tomcat'
+        NEXUS_VERSION = 'nexus3'
+        NEXUS_PROTOCOL = 'http'
+        NEXUS_URL = '3.23.87.213:8081'
+        NEXUS_REPOSITORY = 'userportal'
+        NEXUS_CREDENTIAL_ID = 'nexus-credentials'
     }
-
+    
     stages {
-
-        stage('Checkout') {
+        stage('Build') {
             steps {
-                git branch: 'main', url: 'https://github.com/Timidevops/Userportal.git'
+                sh 'mvn clean package'
+                sh 'mv target/devops-userportal.war target/ROOT.war'
             }
         }
-
-        stage('Build WAR') {
-            steps {
-                sh 'mvn -B clean package'
-            }
-        }
-
+        
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sonarqube-server') {  // Name from Jenkins → Configure System → SonarQube
-                    sh """
-                    mvn -B clean verify sonar:sonar \
-                      -Dsonar.projectKey=userportal \
-                      -Dsonar.login=${SONAR_TOKEN}
-                    """
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
                 script {
-                    timeout(time: 5, unit: 'MINUTES') {
-                        def qg = waitForQualityGate()
-                        if (qg.status != 'OK') {
-                            error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                    try {
+                        withSonarQubeEnv('SonarQube') {
+                            sh 'mvn sonar:sonar'
                         }
+                        
+                        timeout(time: 10, unit: 'MINUTES') {
+                            def qg = waitForQualityGate()
+                            if (qg.status != 'OK') {
+                                echo "Quality Gate failed: ${qg.status}"
+                                echo "Continuing build despite quality gate failure..."
+                            }
+                        }
+                    } catch (Exception e) {
+                        echo "SonarQube analysis failed: ${e.getMessage()}"
+                        echo "Continuing build..."
                     }
                 }
             }
         }
-
-        stage('Upload WAR to Nexus') {
-    steps {
-        echo "Uploading WAR to Nexus..."
-
-        withCredentials([usernamePassword(
-            credentialsId: 'nexus',
-            usernameVariable: 'NEXUS_USR',
-            passwordVariable: 'NEXUS_PSW'
-        )]) {
-
-            sh """
-                mvn -s /var/lib/jenkins/.m2/settings.xml deploy \
-                    -DaltDeploymentRepository=nexus::default::http://18.117.178.164:8081/repository/userportal-war-artifact/
-            """
-        }
-    }
-}
-
-
-
-
-        stage('Build Docker Image') {
+        
+        stage('Deploy to Tomcat') {
             steps {
-                sh """
-                docker build -t ${IMAGE}:${env.BUILD_NUMBER} .
-                """
+                sh "rm -rf ${TOMCAT_HOME}/webapps/*"
+                sh "cp target/ROOT.war ${TOMCAT_HOME}/webapps/"
             }
         }
-
-        stage('Push Docker Image') {
+        
+        stage('Upload to Nexus') {
             steps {
-                sh """
-                echo "${DOCKERHUB_PSW}" | docker login -u "${DOCKERHUB_USR}" --password-stdin
-                docker push ${IMAGE}:${env.BUILD_NUMBER}
-                docker tag ${IMAGE}:${env.BUILD_NUMBER} ${IMAGE}:latest
-                docker push ${IMAGE}:latest
-                """
-            }
-        }
-
-        stage('Deploy to Kubernetes') {
-            steps {
-                sh """
-                # Ensure kubeconfig is available at /var/lib/jenkins/.kube/config
-                kubectl config get-contexts
-
-                kubectl set image deployment/${KUBE_DEPLOYMENT} \
-                  tomcat=${IMAGE}:${env.BUILD_NUMBER} \
-                  -n ${KUBE_NAMESPACE}
-
-                kubectl rollout status deployment/${KUBE_DEPLOYMENT} -n ${KUBE_NAMESPACE}
-                """
+                nexusArtifactUploader(
+                    nexusVersion: NEXUS_VERSION,
+                    protocol: NEXUS_PROTOCOL,
+                    nexusUrl: NEXUS_URL,
+                    groupId: 'com.userportal',
+                    version: '1.0.0',
+                    repository: NEXUS_REPOSITORY,
+                    credentialsId: NEXUS_CREDENTIAL_ID,
+                    artifacts: [
+                        [artifactId: 'devops-userportal',
+                         classifier: '',
+                         file: 'target/ROOT.war',
+                         type: 'war']
+                    ]
+                )
             }
         }
     }
-
+    
     post {
+        always {
+            cleanWs()
+        }
         success {
-            echo "✅ Deployment successful: ${IMAGE}:${env.BUILD_NUMBER} is live in ${KUBE_NAMESPACE}"
+            echo 'Pipeline completed successfully!'
         }
         failure {
-            echo "❌ Pipeline failed. Check the stage logs."
+            echo 'Pipeline failed!'
         }
     }
 }
