@@ -2,7 +2,8 @@ pipeline {
     agent any
     
     environment {
-        TOMCAT_HOME = '/opt/tomcat'
+        TOMCAT_URL = 'http://3.23.87.213:8080'
+        TOMCAT_CREDENTIAL_ID = 'tomcat-credentials'
         NEXUS_VERSION = 'nexus3'
         NEXUS_PROTOCOL = 'http'
         NEXUS_URL = '3.23.87.213:8081'
@@ -43,8 +44,11 @@ pipeline {
         
         stage('Deploy to Tomcat') {
             steps {
-                sh "rm -rf ${TOMCAT_HOME}/webapps/*"
-                sh "cp target/ROOT.war ${TOMCAT_HOME}/webapps/"
+                deploy adapters: [tomcat9(credentialsId: TOMCAT_CREDENTIAL_ID, 
+                                         path: '', 
+                                         url: TOMCAT_URL)], 
+                       contextPath: '/', 
+                       war: 'target/ROOT.war'
             }
         }
         
