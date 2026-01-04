@@ -2,8 +2,9 @@ pipeline {
     agent any
     
     environment {
-        TOMCAT_URL = 'http://3.23.87.213:8080'
-        TOMCAT_CREDENTIAL_ID = 'tomcat-credentials'
+        TOMCAT_SERVER = '3.23.87.213'
+        TOMCAT_USER = 'ec2-user'
+        TOMCAT_SSH_KEY = 'tomcat-ssh-key'
         NEXUS_VERSION = 'nexus3'
         NEXUS_PROTOCOL = 'http'
         NEXUS_URL = '3.23.87.213:8081'
@@ -44,11 +45,11 @@ pipeline {
         
         stage('Deploy to Tomcat') {
             steps {
-                deploy adapters: [tomcat9(credentialsId: TOMCAT_CREDENTIAL_ID, 
-                                         path: '', 
-                                         url: TOMCAT_URL)], 
-                       contextPath: '/', 
-                       war: 'target/ROOT.war'
+                sshagent([TOMCAT_SSH_KEY]) {
+                    sh "ssh -o StrictHostKeyChecking=no ${TOMCAT_USER}@${TOMCAT_SERVER} 'sudo rm -rf /opt/tomcat/webapps/*'"
+                    sh "scp -o StrictHostKeyChecking=no target/ROOT.war ${TOMCAT_USER}@${TOMCAT_SERVER}:/tmp/"
+                    sh "ssh -o StrictHostKeyChecking=no ${TOMCAT_USER}@${TOMCAT_SERVER} 'sudo mv /tmp/ROOT.war /opt/tomcat/webapps/'"
+                }
             }
         }
         
