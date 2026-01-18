@@ -58,7 +58,7 @@
 <distributionManagement>
     <repository>
         <id>nexus</id>
-        <url>http://3.23.87.213:8081/repository/userportal/</url>
+        <url>http://172.31.19.7:8081/repository/userportal/</url>
     </repository>
 </distributionManagement>
 
